@@ -21,6 +21,8 @@ MQTTClient mqttClient;
 WiFiClient wifiClient;
 WiFiManager wifiManager;
 
+t_Settings settings;
+
 void saveConfigCallback() {
   t_Settings settings;
 
@@ -30,16 +32,17 @@ void saveConfigCallback() {
   setSettings(settings);
 }
 
-void setupTasks(t_Settings settings) {
-  commandQueue = xQueueCreate(10, sizeof(t_MqttCommand));
-  postbackQueue = xQueueCreate(10, sizeof(String));
+void setupTasks() {
+  commandQueue = xQueueCreate(1, sizeof(t_MqttCommand));
+  postbackQueue = xQueueCreate(1, sizeof(const char *));
 
-  xTaskCreate(handleCommands, "Handle Commands", 2056, NULL, 1, NULL);
+  xTaskCreate(handleCommands, "Handle Commands", 4112, NULL, 1, NULL);
   xTaskCreate(handlePostRequestPostbacks, "Handle Request Postbacks", 2056,
               NULL, 1, NULL);
   xTaskCreate(monitorWIFIHealth, " Monitor WiFi Health", 2056, NULL, 1, NULL);
-  xTaskCreate(monitorMQTTHealth, " Monitor MQTT Health", 2056, &settings, 1,
-              NULL);
+
+  xTaskCreate(monitorMQTTHealth, " Monitor MQTT Health", 2056,
+              (void *)&settings, 1, NULL);
 }
 
 void setupWiFi() {
@@ -65,7 +68,7 @@ void IRAM_ATTR handleResetButtonPress() {
   xTaskCreate(clearWiFiSettings, "Clear WiFi Settings", 2056, NULL, 1, NULL);
 }
 
-void setupMQTT(t_Settings settings) {
+void setupMQTT() {
   mqttClient.begin(settings.host, wifiClient);
   mqttClient.onMessage(messageReceived);
 }
@@ -82,7 +85,7 @@ void setup() {
   // setup WiFi
   setupWiFi();
 
-  t_Settings settings = getSettings();
+  settings = getSettings();
 
   Serial.print("Client Id: ");
   Serial.println(settings.client_id);
@@ -90,7 +93,10 @@ void setup() {
   Serial.print("Host: ");
   Serial.println(settings.host);
 
-  setupTasks(settings);
+  // setup mqtt
+  setupMQTT();
+
+  setupTasks();
 }
 
 void loop() {}

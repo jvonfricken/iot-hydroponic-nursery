@@ -5,12 +5,8 @@
 #include <mqtt_handlers.h>
 #include <settings.h>
 
-void sendPostback(String uuid) {
-  xQueueSend(postbackQueue, &uuid, portMAX_DELAY);
-}
-
 void handleTriggerLightCommand(t_MqttCommand *command) {
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
   deserializeJson(doc, command->payload);
 
   if (doc["direction"] == "activate") {
@@ -23,16 +19,17 @@ void handleTriggerLightCommand(t_MqttCommand *command) {
     digitalWrite(LIGHT_PIN, LOW);
   }
 
-  sendPostback(doc["postback_uuid"]);
+  const char *postbackUuid = doc["postback_uuid"];
+  xQueueSend(postbackQueue, &postbackUuid, portMAX_DELAY);
 }
 
 void handleFloodTableTask(void *pvParameters) {
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
   t_MqttCommand *command = (t_MqttCommand *)pvParameters;
 
   deserializeJson(doc, command->payload);
 
-  if (doc["table"] == 1) {
+  if (doc["level"] == 1) {
     Serial.println("beginning to flood table 1");
     digitalWrite(PUMP_1_PIN, HIGH);
     vTaskDelay(doc["duration"]);
@@ -40,7 +37,7 @@ void handleFloodTableTask(void *pvParameters) {
     Serial.println("ending flooding table 2");
   }
 
-  if (doc["table"] == 2) {
+  if (doc["level"] == 2) {
     Serial.println("beginning to flood table 2");
     digitalWrite(PUMP_2_PIN, HIGH);
     vTaskDelay(doc["duration"]);
@@ -48,7 +45,8 @@ void handleFloodTableTask(void *pvParameters) {
     Serial.println("ending flooding table 2");
   }
 
-  sendPostback(doc["postback_uuid"]);
+  const char *postbackUuid = doc["postback_uuid"];
+  xQueueSend(postbackQueue, &postbackUuid, portMAX_DELAY);
 }
 
 void handleCommands(void *pvParameters) {
@@ -58,9 +56,13 @@ void handleCommands(void *pvParameters) {
     t_MqttCommand command;
     xQueueReceive(commandQueue, &command, portMAX_DELAY);
 
+    Serial.println(command.payload);
+
     switch (command.commandType) {
       case TriggerLight:
+        Serial.println("triggering light");
         handleTriggerLightCommand(&command);
+        break;
       case FloodTable:
         if (xFloodTableTaskHandle == NULL) {
           Serial.println("flooding table");
@@ -69,16 +71,16 @@ void handleCommands(void *pvParameters) {
         } else {
           Serial.println("blocking flooding because task is still running");
         }
+        break;
     }
   }
 }
 
 void handlePostRequestPostbacks(void *pvParameters) {
   for (;;) {
-    String postbackUUID;
-    xQueueReceive(postbackQueue, &postbackUUID, portMAX_DELAY);
-
-    handlePostback(postbackUUID);
+    const char *postbackUuid;
+    xQueueReceive(postbackQueue, &postbackUuid, portMAX_DELAY);
+    handlePostback(postbackUuid);
   }
 }
 
@@ -101,17 +103,27 @@ void clearWiFiSettings(void *pvParameters) {
 // Workaround because it seems like the ESP32 firmware doesn't like to
 // autoreconnect if it's booted off the network
 void monitorWIFIHealth(void *pvParameters) {
+  int retryCount = 0;
+
   for (;;) {
     vTaskDelay(10);
+    if (retryCount >= 5) {
+      Serial.println("restarting due to network failure");
+      ESP.restart();
+    }
+
     if (WiFi.status() != WL_CONNECTED) {
-      bool res;
-      res = wifiManager.autoConnect("Nursery Table Setup",
-                                    "nursery-table");  // password protected ap
+      Serial.println("attempting reconnection after failed");
+
+      bool res =
+          wifiManager.autoConnect("Nursery Table Setup", "nursery-table");
 
       if (!res) {
-        Serial.println("Failed to connect");
+        Serial.println("Failed to connect after disconnect");
+        retryCount++;
       } else {
-        Serial.println("WiFi connected");
+        retryCount = 0;
+        Serial.println("WiFi connected after disconnect");
       }
     }
 

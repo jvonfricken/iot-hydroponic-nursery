@@ -12,9 +12,9 @@ const int RESET_PIN = 0;
 
 enum MqttCommandType { TriggerLight, FloodTable };
 
-typedef struct {
+typedef struct MqttCommand {
   MqttCommandType commandType;
-  String payload;
+  const char *payload;
 } t_MqttCommand;
 
 #endif
